@@ -7,7 +7,13 @@ edition = "2021"
 
 [dependencies]
 anyhow = "1.0.79"
+ctrlc = "3.4.2"
 futures-channel = "0.3.30"
 futures-util = "0.3.30"
+lazy_static = "1.4.0"
+rand = "0.8.5"
+serde = {version = "1.0.196", features = ["derive", "rc"]}
+serde_json = "1.0.113"
+sqlite = "0.33.0"
 tokio = {version = "1.36.0", features=["full"]}
-tokio-tungstenite = {version = "0.21.0", features = ["handshake"]}
+tokio-tungstenite = {version = "0.21.0", features = ["handshake", "native-tls"]}

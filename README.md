@@ -8,3 +8,9 @@ Tensor is not really meant for large scale use, and is mainly just a experiment 
 
 ## How to get started?
 Idk. You tell me.
+
+
+Websocat Client Command to Connect to server
+```
+websocat ws://127.0.0.1:6969 -H='Sec-Websocket-Protocol: Authorization, ${token}'
+```

@@ -1,42 +1,77 @@
+pub mod client;
+pub mod server;
 use std::{
-    collections::HashMap, env,  net::SocketAddr, sync::{Arc, Mutex}
+    net::SocketAddr,
+    process::exit,
+    sync::{Arc, Mutex},
 };
 
 use anyhow::Result;
-use futures_channel::mpsc::{unbounded, UnboundedSender};
+use futures_channel::mpsc::unbounded;
 use futures_util::{future, pin_mut, stream::TryStreamExt, StreamExt};
 
+use lazy_static::lazy_static;
+use server::Server;
 use tokio::net::{TcpListener, TcpStream};
-use tokio_tungstenite::tungstenite::{handshake::server::{Request, Response}, http::{Response as http_Response, StatusCode}, protocol::Message};
+use tokio_tungstenite::tungstenite::{
+    handshake::server::{Request, Response},
+    http::{Response as http_Response, StatusCode},
+    protocol::Message,
+};
 
-type Tx = UnboundedSender<Message>;
-type PeerMap = Arc<Mutex<HashMap<SocketAddr, Tx>>>;
+lazy_static! {
+    pub static ref SERVER: Arc<Mutex<Server>> = Arc::from(Mutex::new(Server::init_server()));
+}
 
-
-async fn handle_connection(peer_map: PeerMap, raw_stream: TcpStream, addr: SocketAddr) {
+async fn handle_connection(raw_stream: TcpStream, addr: SocketAddr) {
     println!("Incoming TCP connection from: {}", addr);
-
-
-     let callback = |req: &Request, mut response: Response| {
+    let callback = |req: &Request, mut response: Response| {
         for (ref header, _value) in req.headers() {
             println!("* {}: {:?}", header, _value);
         }
-        let protoheaders=  req.headers().get("Sec-WebSocket-Protocol").unwrap();
-        let binding = protoheaders.to_str().unwrap().split(", ").map(|v| v.to_owned()).collect::<Vec<String>>();
+        let protoheaders = req.headers().get("Sec-WebSocket-Protocol").unwrap();
+        let binding = protoheaders
+            .to_str()
+            .unwrap()
+            .split(", ")
+            .map(|v| v.to_owned())
+            .collect::<Vec<String>>();
         let mut protocol_segments = binding.iter();
         let token = match protocol_segments.next() {
-        Some(t) => {if t.eq("Authorization") {protocol_segments.next()} else {None}},
+            Some(t) => {
+                if t.eq("Authorization") {
+                    protocol_segments.next()
+                } else {
+                    None
+                }
+            }
             _ => None,
-     };
-
+        };
         match token {
-            None => return Err(http_Response::builder().status(StatusCode::NETWORK_AUTHENTICATION_REQUIRED).body(Some("No Authorization Token Provided".to_owned())).unwrap()),
-            Some(token) => println!("Got Token from client header: {}", token.as_str())
+            None => {
+                return Err(http_Response::builder()
+                    .status(StatusCode::NETWORK_AUTHENTICATION_REQUIRED)
+                    .body(Some("No Authorization Token Provided".to_owned()))
+                    .unwrap());
+            }
+            Some(token) => {
+                println!("Got Token from client header: {}", token.as_str());
+                let client = SERVER.lock().unwrap().is_client_valid(token.as_str());
+                match client {
+                    Some(c) => SERVER.lock().unwrap().client_connected(addr, c),
+                    None => {
+                        return Err(http_Response::builder()
+                            .status(StatusCode::NETWORK_AUTHENTICATION_REQUIRED)
+                            .body(Some("No Invalid Token Provided".to_owned()))
+                            .unwrap());
+                    }
+                }
+            }
         }
         println!("protocol_segments: {protocol_segments:#?}");
-      
+
         let headers = response.headers_mut();
-        headers.insert("Sec-Websocket-Protocol","Authorization".parse().unwrap());
+        headers.insert("Sec-Websocket-Protocol", "Authorization".parse().unwrap());
 
         Ok(response)
     };
@@ -44,45 +79,60 @@ async fn handle_connection(peer_map: PeerMap, raw_stream: TcpStream, addr: Socke
     let ws_stream = tokio_tungstenite::accept_hdr_async(raw_stream, callback)
         .await
         .expect("Error during the websocket handshake occurred");
+
     println!("WebSocket connection established: {}", addr);
 
-    // Insert the write part of this peer to the peer map.
     let (tx, rx) = unbounded();
-    peer_map.lock().unwrap().insert(addr, tx);
+    SERVER.lock().unwrap().set_connected_client_tx(&addr, tx);
 
     let (outgoing, incoming) = ws_stream.split();
-
     let broadcast_incoming = incoming.try_for_each(|msg| {
-        println!("Received a message from {}: {}", addr, msg.to_text().unwrap());
-        let peers = peer_map.lock().unwrap();
+        println!(
+            "Received a message from {}: {}",
+            addr,
+            msg.to_text().unwrap()
+        );
+        let peers = SERVER.lock().unwrap().get_connected_clients();
 
         // We want to broadcast the message to everyone except ourselves.
-        let broadcast_recipients =
-            peers.iter().filter(|(peer_addr, _)| peer_addr != &&addr).map(|(_, ws_sink)| ws_sink);
-
+        let broadcast_recipients = peers
+            .iter()
+            .filter(|(peer_addr, _)| peer_addr != &&addr)
+            .map(|(_, client)| client.tx.as_ref().unwrap());
+        let sender = peers
+            .iter()
+            .filter(|(peer_addr, _)| peer_addr == &&addr)
+            .map(|(_, client)| client.get_uuid())
+            .next()
+            .unwrap();
         for recp in broadcast_recipients {
-            recp.unbounded_send(Message::from(format!("{addr}: {}", msg.to_text().unwrap()))).unwrap();
+            recp.unbounded_send(Message::from(format!(
+                "{sender}: {}",
+                msg.to_text().unwrap()
+            )))
+            .expect("Failed to Send Message to Peers");
         }
 
         future::ok(())
     });
-
     let receive_from_others = rx.map(Ok).forward(outgoing);
 
     pin_mut!(broadcast_incoming, receive_from_others);
     future::select(broadcast_incoming, receive_from_others).await;
-
     println!("{} disconnected", &addr);
-    peer_map.lock().unwrap().remove(&addr);
+    SERVER.lock().unwrap().client_disconnected(&addr);
 }
-
- 
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let addr = env::args().nth(1).unwrap_or_else(|| "127.0.0.1:8080".to_string());
+    let addr = SERVER.lock().unwrap().get_addr();
+    let _ = ctrlc::set_handler(move || {
+        println!("received Ctrl+C!");
+        SERVER.lock().unwrap().cleanup();
+        exit(0)
+    });
 
-    let state = PeerMap::new(Mutex::new(HashMap::new()));
+    // SERVER.lock().unwrap().new_client("Veltearas");
 
     // Create the event loop and TCP listener we'll accept connections on.
     let try_socket = TcpListener::bind(&addr).await;
@@ -91,9 +141,7 @@ async fn main() -> Result<()> {
 
     // Let's spawn the handling of each connection in a separate task.
     while let Ok((stream, addr)) = listener.accept().await {
-        tokio::spawn(handle_connection(state.clone(), stream, addr));
+        tokio::spawn(handle_connection(stream, addr));
     }
-    
-
     Ok(())
 }
