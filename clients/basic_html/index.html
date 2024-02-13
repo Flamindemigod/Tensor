@@ -5,26 +5,58 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <script src="https://cdn.tailwindcss.com"></script>
     <script defer>
-      const ws = new WebSocket("ws://136.243.175.33:6969", [
+      const ws = new WebSocket("ws://127.0.0.1:6969", [
         "Authorization",
-        "bob",
+        "Your Auth Token Here",
       ]);
+      throw Error("Not Provided Token"); // Delete this line after you add the token;
       //message handler
 
       window.onload = () => {
+        const audioContext = new AudioContext();
         const chatLog = document.getElementById("ChatLog");
+        const audio = document.getElementById("audio_bell");
+        const track = audioContext.createMediaElementSource(audio);
+        const gainNode = audioContext.createGain();
+        track.connect(gainNode).connect(audioContext.destination);
+        let playing = !audio.paused;
+        let timeout = null;
         ws.onmessage = (e) => {
+          if (audioContext.state === "suspended") {
+            audioContext.resume();
+          }
+
           const fragment = document.createDocumentFragment();
           const inner = fragment.appendChild(document.createElement("div"));
           inner.innerHTML = e.data;
           chatLog.appendChild(inner);
+          chatLog.scrollTo({
+            top: chatLog.scrollHeight - chatLog.clientHeight,
+          });
+          audio.play();
+          gainNode.gain.value *= 1 + 0.02;
+          if (timeout) {
+            clearTimeout(timeout);
+          }
+          timeout = setTimeout(() => {
+            clearTimeout(timeout);
+            playing = false;
+            gainNode.gain.value = 1;
+          }, 1000);
         };
 
         //sending message
         const sendButton = document.getElementById("send");
         const input = document.getElementById("text_input");
         sendButton.onclick = () => {
-          ws.send(input.value);
+          const data = {
+            op: 0,
+            allowed_mentions: true,
+            message_uuid: null,
+            message: input.value,
+          };
+
+          ws.send(JSON.stringify(data));
           const fragment = document.createDocumentFragment();
           const inner = fragment.appendChild(document.createElement("div"));
           inner.innerHTML = "Self: " + input.value;
@@ -51,5 +83,11 @@
         Send Message
       </button>
     </div>
+    <audio
+      id="audio_bell"
+      src="https://us-tuna-sounds-files.voicemod.net/a2831066-7ed5-4634-835e-fc4a0bad9af8-1643972609748.mp3"
+      preload
+      crossorigin
+    ></audio>
   </body>
 </html>

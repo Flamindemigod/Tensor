@@ -1,4 +1,5 @@
 pub mod client;
+pub mod message;
 pub mod server;
 use std::{
     net::SocketAddr,
@@ -18,6 +19,8 @@ use tokio_tungstenite::tungstenite::{
     http::{Response as http_Response, StatusCode},
     protocol::Message,
 };
+
+use crate::message::{ClientSend, Message as ServerMessage};
 
 lazy_static! {
     pub static ref SERVER: Arc<Mutex<Server>> = Arc::from(Mutex::new(Server::init_server()));
@@ -87,33 +90,45 @@ async fn handle_connection(raw_stream: TcpStream, addr: SocketAddr) {
 
     let (outgoing, incoming) = ws_stream.split();
     let broadcast_incoming = incoming.try_for_each(|msg| {
-        println!(
-            "Received a message from {}: {}",
-            addr,
-            msg.to_text().unwrap()
-        );
-        let peers = SERVER.lock().unwrap().get_connected_clients();
+        if let Some(client_message) = ClientSend::parse(msg.clone().into_data()) {
+            println!(
+                "Received a message from {}: {}",
+                addr, client_message.message
+            );
+            let peers = SERVER.lock().unwrap().get_connected_clients();
+            // We want to broadcast the message to everyone except ourselves.
+            let broadcast_recipients = peers
+                .iter()
+                .filter(|(peer_addr, _)| peer_addr != &&addr)
+                .map(|(_, client)| client);
+            let sender = peers
+                .iter()
+                .filter(|(peer_addr, _)| peer_addr == &&addr)
+                .map(|(_, client)| client.get_uuid())
+                .next()
+                .unwrap();
+            let server_message = ServerMessage::new(client_message.message, sender);
+            let mentions = server_message.mentions();
 
-        // We want to broadcast the message to everyone except ourselves.
-        let broadcast_recipients = peers
-            .iter()
-            .filter(|(peer_addr, _)| peer_addr != &&addr)
-            .map(|(_, client)| client.tx.as_ref().unwrap());
-        let sender = peers
-            .iter()
-            .filter(|(peer_addr, _)| peer_addr == &&addr)
-            .map(|(_, client)| client.get_uuid())
-            .next()
-            .unwrap();
-        for recp in broadcast_recipients {
-            recp.unbounded_send(Message::from(format!(
-                "{sender}: {}",
-                msg.to_text().unwrap()
-            )))
-            .expect("Failed to Send Message to Peers");
+            for recp in broadcast_recipients {
+                let m = if mentions.contains(&recp.get_uuid().to_string()) {
+                    server_message.clone().set_mention()
+                } else {
+                    server_message.clone()
+                };
+                recp.tx
+                    .as_ref()
+                    .unwrap()
+                    .unbounded_send(Message::from(format!("{:#?}", m)))
+                    .expect("Failed to Send Message to Peers");
+            }
+            future::ok(())
+        } else {
+            // let stream = (incoming.reunite(outgoing)).unwrap();
+            // drop(stream);
+            //SERVER.lock().unwrap().client_disconnected(&addr);
+            future::err(tokio_tungstenite::tungstenite::Error::ConnectionClosed)
         }
-
-        future::ok(())
     });
     let receive_from_others = rx.map(Ok).forward(outgoing);
 
