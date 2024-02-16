@@ -20,14 +20,17 @@ pub type Tx = UnboundedSender<Message>;
 
 #[derive(Serialize)]
 struct ClientExport {
-    server_addr: SocketAddr,
+    server_ip: IpAddr,
+    server_port: u16,
     server_name: Arc<str>,
     client_token: Arc<str>,
 }
 impl ClientExport {
     pub fn new(server: &Server, client: &Client) -> Self {
+        let addr= server.get_addr();
         let e = Self {
-            server_addr: server.get_addr(),
+            server_ip: addr.ip(),
+            server_port: addr.port(),
             server_name: server.server_name.clone(),
             client_token: client.get_token(),
         };
