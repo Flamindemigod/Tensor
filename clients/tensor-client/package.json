@@ -7,7 +7,8 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "check": "svelte-check --tsconfig ./tsconfig.json"
+    "check": "svelte-check --tsconfig ./tsconfig.json",
+    "format": "prettier --write ."
   },
   "devDependencies": {
     "@sveltejs/vite-plugin-svelte": "^3.0.2",
@@ -28,6 +29,8 @@
     "bits-ui": "^0.18.1",
     "clsx": "^2.1.0",
     "mode-watcher": "^0.2.1",
+    "prettier": "^3.2.5",
+    "prettier-plugin-svelte": "^3.2.1",
     "radix-icons-svelte": "^1.2.1",
     "tailwind-merge": "^2.2.1",
     "tailwind-variants": "^0.2.0",

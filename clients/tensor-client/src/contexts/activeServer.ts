@@ -6,11 +6,25 @@ export const ACTIVE_SERVER = writable<{ server: Server; ws: WebSocket } | null>(
 );
 
 export const setServerActive = (server: Server) => {
-  ACTIVE_SERVER.set({
-    server: server,
-    ws: new WebSocket(`ws://${server.server_ip}:${server.server_port}`, [
-      "Authorization",
-      server.client_token,
-    ]),
+  ACTIVE_SERVER.update((a) => {
+    if (!!a?.ws) {
+      a.ws.close();
+    }
+    return {
+      server: server,
+      ws: new WebSocket(`ws://${server.server_ip}:${server.server_port}`, [
+        "Authorization",
+        server.client_token,
+      ]),
+    };
+  });
+};
+
+export const unsetServerActive = () => {
+  ACTIVE_SERVER.update((a) => {
+    if (!!a?.ws) {
+      a.ws.close();
+    }
+    return null;
   });
 };

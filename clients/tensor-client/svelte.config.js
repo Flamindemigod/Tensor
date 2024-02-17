@@ -9,6 +9,7 @@ export default {
     alias: {
       "$contexts/*": path.resolve("./src/contexts/*"),
       "$lib/*": path.resolve("./src/lib/*"),
+      "$types/*": path.resolve("./src/types/*"),
     },
   },
 };

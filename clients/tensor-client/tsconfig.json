@@ -27,10 +27,12 @@
     "paths": {
       "$lib": ["./src/lib"],
       "$lib/*": ["./src/lib/*"],
+      "$types": ["./src/types/"],
+      "$types/*": ["./src/types/*"],
       "$context": ["./src/contexts/"],
-      "$context/*": ["./src/contexts/*"],
-    },
+      "$context/*": ["./src/contexts/*"]
+    }
   },
   "include": ["src/**/*.ts", "src/**/*.js", "src/**/*.svelte"],
-  "references": [{ "path": "./tsconfig.node.json" }],
+  "references": [{ "path": "./tsconfig.node.json" }]
 }

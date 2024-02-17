@@ -17,7 +17,6 @@ use tokio::net::{TcpListener, TcpStream};
 use tokio_tungstenite::tungstenite::{
     handshake::server::{Request, Response},
     http::{Response as http_Response, StatusCode},
-    protocol::Message,
 };
 
 use crate::message::{ClientSend, Message as ServerMessage};
@@ -96,11 +95,8 @@ async fn handle_connection(raw_stream: TcpStream, addr: SocketAddr) {
                 addr, client_message.message
             );
             let peers = SERVER.lock().unwrap().get_connected_clients();
-            // We want to broadcast the message to everyone except ourselves.
             let broadcast_recipients = peers
-                .iter()
-                .filter(|(peer_addr, _)| peer_addr != &&addr)
-                .map(|(_, client)| client);
+                .values();
             let sender = peers
                 .iter()
                 .filter(|(peer_addr, _)| peer_addr == &&addr)
@@ -119,7 +115,7 @@ async fn handle_connection(raw_stream: TcpStream, addr: SocketAddr) {
                 recp.tx
                     .as_ref()
                     .unwrap()
-                    .unbounded_send(Message::from(format!("{:#?}", m)))
+                    .unbounded_send(m.to_message())
                     .expect("Failed to Send Message to Peers");
             }
             future::ok(())

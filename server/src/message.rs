@@ -2,16 +2,17 @@ use std::sync::Arc;
 
 use rand::distributions::{Alphanumeric, DistString};
 use regex::Regex;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_repr::Deserialize_repr;
+use tokio_tungstenite::tungstenite::protocol::Message as Message_Tungestenite;
 
 //Server Response to Peers
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize)]
 pub struct Message {
     message_uuid: Arc<str>,
     author_uuid: Arc<str>,
     data: String,
-    editied: bool,
+    edited: bool,
     pub is_mentioned: bool,
 }
 
@@ -25,7 +26,7 @@ impl Message {
             message_uuid: Self::generate_message_id(),
             author_uuid,
             data,
-            editied: false,
+            edited: false,
             is_mentioned: false,
         }
     }
@@ -43,6 +44,10 @@ impl Message {
         let mut new_message = self.clone();
         new_message.is_mentioned = true;
         new_message
+    }
+
+    pub fn to_message(&self) -> Message_Tungestenite{
+        Message_Tungestenite::from(serde_json::to_string(self).unwrap())
     }
 }
 
