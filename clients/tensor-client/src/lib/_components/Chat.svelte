@@ -8,7 +8,7 @@
     type IncomingMessage,
   } from "$types/message";
   import { writable, type Writable } from "svelte/store";
-  import { onDestroy } from "svelte";
+  import { onDestroy, onMount } from "svelte";
 
   let text: string;
   let messages: Writable<Map<string, IncomingMessage>> = writable(new Map());
@@ -39,7 +39,12 @@
     const header = document.querySelector("header");
     height = document.body.clientHeight - (header?.clientHeight ?? 0);
   };
+  onMount(
+    ()=>{
+getHeight();
   document.addEventListener("resize", getHeight);
+    }
+  )
   onDestroy(() => {
     document.removeEventListener("resize", getHeight);
   });

@@ -15,7 +15,7 @@ export enum ServerConnectionStatus {
 }
 
 export const server_validator = client_config_validator.extend({
-  server_icon: z.string().url().nullable(),
+  server_icon: z.string().nullable(),
   // auto_join: z.boolean(),
   // connected: z.boolean(),
   connection_status: z.nativeEnum(ServerConnectionStatus),

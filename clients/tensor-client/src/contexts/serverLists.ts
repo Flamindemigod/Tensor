@@ -1,4 +1,4 @@
-import { derived, writable, type Writable } from "svelte/store";
+import { derived, writable } from "svelte/store";
 import {
   server_validator,
   type Server,
@@ -35,6 +35,17 @@ export function addServer(server: ServerConfig) {
     s.add({ ...default_server, ...server } as Server),
   );
 }
+
+
+export function setServerIcon(server:Server, img: string|undefined){
+  if (!img) return; 
+  const data = {...server, server_icon: img} 
+  console.log("setting server icon ", img);
+  SERVERS_Internal.update((s) =>
+  new Set([...s.values()].map(si => si === server ? data : si))
+    )
+}
+
 
 export const SERVERS = derived(SERVERS_Internal, ($a) => [...$a.values()]);
 
