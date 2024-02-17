@@ -29,6 +29,8 @@ typedef struct {
   char *data;
   bool edited;
   bool is_mentioned;
+  bool is_server_message;
+  int unix_time; //Time in Seconds from from UNIX_EPOCH
 } Message;
 
 typedef enum {

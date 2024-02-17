@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{sync::Arc, time::{SystemTime, UNIX_EPOCH}};
 
 use rand::distributions::{Alphanumeric, DistString};
 use regex::Regex;
@@ -14,6 +14,8 @@ pub struct Message {
     data: String,
     edited: bool,
     pub is_mentioned: bool,
+    unix_time: u64,
+    is_server_message: bool,
 }
 
 impl Message {
@@ -28,8 +30,23 @@ impl Message {
             data,
             edited: false,
             is_mentioned: false,
+            unix_time: SystemTime::now().duration_since(UNIX_EPOCH).expect("Time Travel?").as_secs(),
+            is_server_message: false
         }
     }
+
+     pub fn new_server_message(data: String) -> Self {
+        Self {
+            message_uuid: Self::generate_message_id(),
+            author_uuid: "000-000-000-000-".into(),
+            data,
+            edited: false,
+            is_mentioned: false,
+            unix_time: SystemTime::now().duration_since(UNIX_EPOCH).expect("Time Travel?").as_secs(),
+            is_server_message: true,
+        }
+    }
+
 
     pub fn mentions(&self) -> Vec<String> {
         let re = Regex::new(r"<<!(.{16})>>").unwrap();

@@ -82,12 +82,29 @@ async fn handle_connection(raw_stream: TcpStream, addr: SocketAddr) {
         .await
         .expect("Error during the websocket handshake occurred");
 
-    println!("WebSocket connection established: {}", addr);
-
+    let message = ServerMessage::new_server_message(format!(
+        "<<!{}>> joined the server",
+        SERVER
+            .lock()
+            .unwrap()
+            .get_connected_clients()
+            .get(&addr)
+            .unwrap()
+            .get_uuid()
+    ))
+    .to_message();
     let (tx, rx) = unbounded();
     SERVER.lock().unwrap().set_connected_client_tx(&addr, tx);
-
+    SERVER
+        .lock()
+        .unwrap()
+        .get_connected_clients()
+        .values()
+        .for_each(|client| {
+            let _ = client.tx.as_ref().unwrap().unbounded_send(message.clone());
+        });
     let (outgoing, incoming) = ws_stream.split();
+
     let broadcast_incoming = incoming.try_for_each(|msg| {
         if let Some(client_message) = ClientSend::parse(msg.clone().into_data()) {
             println!(
@@ -95,8 +112,7 @@ async fn handle_connection(raw_stream: TcpStream, addr: SocketAddr) {
                 addr, client_message.message
             );
             let peers = SERVER.lock().unwrap().get_connected_clients();
-            let broadcast_recipients = peers
-                .values();
+            let broadcast_recipients = peers.values();
             let sender = peers
                 .iter()
                 .filter(|(peer_addr, _)| peer_addr == &&addr)
@@ -131,7 +147,29 @@ async fn handle_connection(raw_stream: TcpStream, addr: SocketAddr) {
     pin_mut!(broadcast_incoming, receive_from_others);
     future::select(broadcast_incoming, receive_from_others).await;
     println!("{} disconnected", &addr);
+    let peers = SERVER
+            .lock()
+            .unwrap()
+            .get_connected_clients();
+
+    let message = ServerMessage::new_server_message(format!(
+        "<<!{}>> disconnected from the server",
+        peers.get(&addr)
+            .unwrap()
+            .get_uuid()
+    )).to_message();
     SERVER.lock().unwrap().client_disconnected(&addr);
+    let peers = SERVER
+            .lock()
+            .unwrap()
+            .get_connected_clients();
+   
+    peers.values()
+        .for_each(|client| {
+            let _ = client.tx.as_ref().unwrap().unbounded_send(message.clone());
+        });
+
+
 }
 
 #[tokio::main]
@@ -143,8 +181,7 @@ async fn main() -> Result<()> {
         exit(0)
     });
 
-    // SERVER.lock().unwrap().new_client("Veltearas");
-
+    // SERVER.lock().unwrap().new_client("Flamindemigod");
     // Create the event loop and TCP listener we'll accept connections on.
     let try_socket = TcpListener::bind(&addr).await;
     let listener = try_socket.expect("Failed to bind");
