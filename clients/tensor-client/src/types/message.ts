@@ -20,6 +20,8 @@ export const incoming_message_validator = z.object({
   data: z.string(),
   edited: z.boolean(),
   is_mentioned: z.boolean(),
+  is_server_message: z.boolean(),
+  unix_time: z.number().int().positive(),
 });
 
 export type IncomingMessage = z.infer<typeof incoming_message_validator>;

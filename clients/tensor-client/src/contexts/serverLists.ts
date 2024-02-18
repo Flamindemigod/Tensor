@@ -36,16 +36,14 @@ export function addServer(server: ServerConfig) {
   );
 }
 
-
-export function setServerIcon(server:Server, img: string|undefined){
-  if (!img) return; 
-  const data = {...server, server_icon: img} 
+export function setServerIcon(server: Server, img: string | undefined) {
+  if (!img) return;
+  const data = { ...server, server_icon: img };
   console.log("setting server icon ", img);
-  SERVERS_Internal.update((s) =>
-  new Set([...s.values()].map(si => si === server ? data : si))
-    )
+  SERVERS_Internal.update(
+    (s) => new Set([...s.values()].map((si) => (si === server ? data : si))),
+  );
 }
-
 
 export const SERVERS = derived(SERVERS_Internal, ($a) => [...$a.values()]);
 
