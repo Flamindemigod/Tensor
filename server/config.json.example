@@ -1,7 +1,8 @@
 {
   "server_name": "Xiangling Paradise",
   "server_ip": "127.0.0.1",
-  "server_port": 6969,
+  "websocket_server_port": 6969,
+  "http_server_port": 9696,
   "db_path": "./test.db",
   "export_path": "./exports"
 }

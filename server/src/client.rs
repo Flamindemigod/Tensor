@@ -1,19 +1,24 @@
 //File Contains Structs for Client Represententaion and Manipulation
 
 use rand::distributions::{Alphanumeric, DistString};
+use serde::Serialize;
 use sqlite::{Connection, Row, Value};
 use std::sync::Arc;
-
+use derivative::Derivative;
 use crate::server::Tx;
-
-#[derive(Debug, Clone)]
+#[derive(Derivative, Serialize)]
+#[derivative(Debug, Clone,Hash, PartialEq, Eq)]
 pub struct Client {
     uuid: Arc<str>,
+    #[serde(skip)]
     token: Arc<str>,
 
     pub username: String,
     pub display_name: String,
     pub about_me: String,
+    #[derivative(PartialEq="ignore")]
+    #[derivative(Hash="ignore")]
+    #[serde(skip)]
     pub tx: Option<Tx>,
 }
 

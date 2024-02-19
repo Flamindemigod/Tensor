@@ -21,16 +21,18 @@ pub type Tx = UnboundedSender<Message>;
 #[derive(Serialize)]
 struct ClientExport {
     server_ip: IpAddr,
-    server_port: u16,
+    server_port_ws: u16,
+    server_port_http: u16,
     server_name: Arc<str>,
     client_token: Arc<str>,
 }
 impl ClientExport {
     pub fn new(server: &Server, client: &Client) -> Self {
-        let addr= server.get_addr();
+        let addr= server.get_addr_websocket();
         let e = Self {
             server_ip: addr.ip(),
-            server_port: addr.port(),
+            server_port_ws: addr.port(),
+            server_port_http: server.get_http_port(),
             server_name: server.server_name.clone(),
             client_token: client.get_token(),
         };
@@ -61,7 +63,8 @@ impl ClientExport {
 pub struct Server {
     pub server_name: Arc<str>,
     server_ip: IpAddr,
-    server_port: u16,
+    websocket_server_port: u16,
+    http_server_port: u16,
     pub export_path: Option<PathBuf>,
     pub db_path: PathBuf,
     #[serde(skip)]
@@ -104,9 +107,20 @@ impl Server {
         self.db = None;
     }
 
-    pub fn get_addr(&self) -> SocketAddr {
-        SocketAddr::new(self.server_ip, self.server_port)
+    pub fn get_websocket_port(&self) -> u16 {
+        self.websocket_server_port
     }
+    pub fn get_http_port(&self) -> u16{
+        self.http_server_port
+    }
+    pub fn get_addr_websocket(&self) -> SocketAddr {
+        SocketAddr::new(self.server_ip, self.websocket_server_port)
+    }
+
+    pub fn get_addr_http(&self) -> SocketAddr {
+        SocketAddr::new(self.server_ip, self.http_server_port)
+    }
+
 
     pub fn is_client_valid(&self, token: &str) -> Option<Client> {
         let query = "SELECT * FROM clients WHERE token = ?";
@@ -139,8 +153,23 @@ impl Server {
         self.connected_clients.clone()
     }
 
+    pub fn is_client_connected_by_token(&self, token: &str) -> bool{
+        self.connected_clients.values().any(|c| c.get_token() == token.into())
+    }
+
     pub fn new_client(&self, username: &str) {
         let client = Client::new(username, self.db.as_ref().unwrap());
         ClientExport::new(self, &client);
+    }
+
+    pub fn get_all_clients(&self) -> Vec<Client>{
+        let query = "SELECT * FROM clients";
+        self.db
+            .as_ref()
+            .expect("Connection does not exist")
+            .prepare(query)
+            .unwrap()
+            .into_iter()
+            .map(|row| Client::from_db_row(row.unwrap())).collect::<Vec<_>>()
     }
 }
