@@ -7,6 +7,7 @@ edition = "2021"
 
 [dependencies]
 anyhow = "1.0.79"
+argh = "0.1.12"
 ctrlc = "3.4.2"
 derivative = "2.2.0"
 futures = { version = "0.3.30", features = ["executor"] }

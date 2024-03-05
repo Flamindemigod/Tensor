@@ -74,14 +74,17 @@ pub struct Server {
 }
 
 impl Server {
-    pub fn init_server() -> Self {
-        let mut reader = File::open("./config.json").expect("Failed to Open Server Config File");
+    pub fn init_server(path: PathBuf) -> Self {
+        let mut reader =
+            File::open(path.join("config.json")).expect("Failed to Open Server Config File");
         let mut buf = String::new();
         reader
             .read_to_string(&mut buf)
             .expect("Failed to Read File");
         let mut s = serde_json::from_str::<Self>(&buf).expect("Failed to Parse Server Config");
-
+        if let Some(export_path) = s.export_path {
+            s.export_path = Some(path.join(export_path));
+        }
         let new_db = !s.db_path.exists();
         let db = sqlite::open(&s.db_path).unwrap_or_else(|_| {
             panic!("Failed to Open Connection to db at {}", s.db_path.display())

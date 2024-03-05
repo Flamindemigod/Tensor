@@ -7,24 +7,42 @@ pub mod websocket;
 
 use anyhow::Result;
 use channel::{interaction_channel, ClientInteractions, Clients, ServerInteractions};
-use std::process::exit;
+use std::{path::PathBuf, process::exit};
 
+use argh::FromArgs;
 use http::http_main;
 use server::Server;
 use websocket::websocket_main;
 
+#[derive(FromArgs, Debug)]
+///Tensor Server
+struct Args {
+    /// generate new client with name
+    #[argh(option, short = 'n', long = "new", arg_name = "name")]
+    name: Option<String>,
+
+    /// path to config directory. Defaults to "."
+    #[argh(positional, default = "PathBuf::from(\".\")", greedy)]
+    dir: PathBuf,
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
+    let args: Args = argh::from_env();
+
     let _ = ctrlc::set_handler(move || {
         println!("received Ctrl+C!");
-        // SERVER.read().unwrap().cleanup();
         exit(0)
     });
 
     //Init Server:
-    let mut server = Server::init_server();
+    let mut server = Server::init_server(args.dir);
+    if let Some(username) = args.name {
+        server.new_client(&username);
+        return Ok(());
+    }
     let (mut server_side, client_side_generator) = interaction_channel(1);
-    // SERVER.lock().unwrap().new_client("Flamindemigod");
+
     let _ws = tokio::spawn(websocket_main(client_side_generator(
         &mut server_side,
         Clients::WebSocket,
@@ -33,14 +51,7 @@ async fn main() -> Result<()> {
         &mut server_side,
         Clients::Http,
     )));
-    // let http = http_main();
-    // let _ = join!(
-    //     ws,
-    //     // http
-    //     );
-    //
-    // let _ = ws.;
-    // let _ = join!(ws);
+
     while let Some(req) = server_side.recieve.recv().await {
         match req {
             ClientInteractions::WsSocket => server_side.respond(
