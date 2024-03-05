@@ -1,23 +1,28 @@
 use crate::{
+    channel::{ClientChannel, ClientInteractions},
     message::{ClientSend, Message as ServerMessage},
-    SERVER,
 };
 use anyhow::Result;
+use futures::executor::block_on;
 use futures_channel::mpsc::unbounded;
 use futures_util::{future, pin_mut, StreamExt, TryStreamExt};
-use std::net::SocketAddr;
-use tokio::net::{TcpListener, TcpStream};
+use std::{net::SocketAddr, sync::Arc};
+use tokio::{
+    net::{TcpListener, TcpStream},
+    sync::Mutex,
+};
 use tokio_tungstenite::tungstenite::{
     handshake::server::{Request, Response},
     http::{Response as http_Response, StatusCode},
 };
 
-async fn handle_connection(raw_stream: TcpStream, addr: SocketAddr) {
+async fn handle_connection(
+    raw_stream: TcpStream,
+    addr: SocketAddr,
+    client_channel: Arc<Mutex<ClientChannel>>,
+) {
     println!("Incoming TCP connection from: {}", addr);
     let callback = |req: &Request, mut response: Response| {
-        for (ref header, _value) in req.headers() {
-            println!("* {}: {:?}", header, _value);
-        }
         let protoheaders = req.headers().get("Sec-WebSocket-Protocol").unwrap();
         let binding = protoheaders
             .to_str()
@@ -40,23 +45,38 @@ async fn handle_connection(raw_stream: TcpStream, addr: SocketAddr) {
             None => {
                 return Err(http_Response::builder()
                     .status(StatusCode::NETWORK_AUTHENTICATION_REQUIRED)
-                    .body(Some("No Authorization Token Provided".to_owned()))
+                    .body(Some("No Authorization Token ?Provided".to_owned()))
                     .unwrap());
             }
             Some(token) => {
-                println!("Got Token from client header: {}", token.as_str());
-                let client = SERVER.lock().unwrap().is_client_valid(token.as_str());
-                match client {
-                    Some(c) => SERVER.lock().unwrap().client_connected(addr, c),
-                    None => {
-                        return Err(http_Response::builder()
-                            .status(StatusCode::NETWORK_AUTHENTICATION_REQUIRED)
-                            .body(Some("No Invalid Token Provided".to_owned()))
-                            .unwrap());
+                let auth = block_on(async {
+                    let mut channel = client_channel.lock().await;
+                    let client = channel
+                        .request(ClientInteractions::WsValidateClient(token.clone()))
+                        .await
+                        .client_validation();
+                    if let Some(client_inner) = client {
+                        channel
+                            .request(ClientInteractions::WsClientConnected {
+                                addr,
+                                client: client_inner,
+                            })
+                            .await;
+                        drop(channel);
+                        return true;
                     }
+                    drop(channel);
+                    false
+                });
+                if !auth {
+                    return Err(http_Response::builder()
+                        .status(StatusCode::NETWORK_AUTHENTICATION_REQUIRED)
+                        .body(Some("No Invalid Token Provided".to_owned()))
+                        .unwrap());
                 }
             }
         }
+
         let headers = response.headers_mut();
         headers.insert("Sec-Websocket-Protocol", "Authorization".parse().unwrap());
         Ok(response)
@@ -66,27 +86,36 @@ async fn handle_connection(raw_stream: TcpStream, addr: SocketAddr) {
         .await
         .expect("Error during the websocket handshake occurred");
 
+    let connected_clients = client_channel
+        .lock()
+        .await
+        .request(ClientInteractions::WsGetConnectedClients)
+        .await
+        .connected_clients();
+
     let message = ServerMessage::new_server_message(format!(
         "<<!{}>> joined the server",
-        SERVER
-            .lock()
-            .unwrap()
-            .get_connected_clients()
-            .get(&addr)
-            .unwrap()
-            .get_uuid()
+        connected_clients.unwrap().get(&addr).unwrap().get_uuid()
     ))
     .to_message();
+
     let (tx, rx) = unbounded();
-    SERVER.lock().unwrap().set_connected_client_tx(&addr, tx);
-    SERVER
+    client_channel
         .lock()
-        .unwrap()
-        .get_connected_clients()
-        .values()
-        .for_each(|client| {
-            let _ = client.tx.as_ref().unwrap().unbounded_send(message.clone());
-        });
+        .await
+        .request(ClientInteractions::WsSetClientConnectedTx { addr, tx })
+        .await;
+    let connected_clients = client_channel
+        .lock()
+        .await
+        .request(ClientInteractions::WsGetConnectedClients)
+        .await
+        .connected_clients()
+        .unwrap();
+
+    connected_clients.values().for_each(|client| {
+        let _ = client.tx.as_ref().unwrap().unbounded_send(message.clone());
+    });
     let (outgoing, incoming) = ws_stream.split();
 
     let broadcast_incoming = incoming.try_for_each(|msg| {
@@ -95,7 +124,15 @@ async fn handle_connection(raw_stream: TcpStream, addr: SocketAddr) {
                 "Received a message from {}: {}",
                 addr, client_message.message
             );
-            let peers = SERVER.lock().unwrap().get_connected_clients();
+            let peers = block_on(async {
+                client_channel
+                    .lock()
+                    .await
+                    .request(ClientInteractions::WsGetConnectedClients)
+                    .await
+                    .connected_clients()
+                    .unwrap()
+            });
             let broadcast_recipients = peers.values();
             let sender = peers
                 .iter()
@@ -127,32 +164,50 @@ async fn handle_connection(raw_stream: TcpStream, addr: SocketAddr) {
 
     pin_mut!(broadcast_incoming, receive_from_others);
     future::select(broadcast_incoming, receive_from_others).await;
-    println!("{} disconnected", &addr);
-    let peers = SERVER.lock().unwrap().get_connected_clients();
+    let peers = client_channel
+        .lock()
+        .await
+        .request(ClientInteractions::WsGetConnectedClients)
+        .await
+        .connected_clients()
+        .unwrap();
 
     let message = ServerMessage::new_server_message(format!(
         "<<!{}>> disconnected from the server",
         peers.get(&addr).unwrap().get_uuid()
     ))
     .to_message();
-    SERVER.lock().unwrap().client_disconnected(&addr);
-    let peers = SERVER.lock().unwrap().get_connected_clients();
-
+    client_channel
+        .lock()
+        .await
+        .request(ClientInteractions::WsClientLeft { addr })
+        .await;
+    let peers = client_channel
+        .lock()
+        .await
+        .request(ClientInteractions::WsGetConnectedClients)
+        .await
+        .connected_clients()
+        .unwrap();
     peers.values().for_each(|client| {
         let _ = client.tx.as_ref().unwrap().unbounded_send(message.clone());
     });
 }
 
-pub async fn websocket_main() -> Result<()> {
-    let addr = SERVER.lock().unwrap().get_addr_websocket();
-    // Create the event loop and TCP listener we'll accept connections on.
+pub async fn websocket_main(mut client: ClientChannel) -> Result<()> {
+    let addr = client
+        .request(ClientInteractions::WsSocket)
+        .await
+        .socket_addr()
+        .unwrap();
     let try_socket = TcpListener::bind(&addr).await;
     let listener = try_socket.expect("Failed to bind");
     println!("Listening to WebSocket Requests on: {}", addr);
 
+    let client_channel = Arc::new(Mutex::new(client));
     // Let's spawn the handling of each connection in a separate task.
     while let Ok((stream, addr)) = listener.accept().await {
-        tokio::spawn(handle_connection(stream, addr));
+        tokio::spawn(handle_connection(stream, addr, client_channel.clone()));
     }
 
     Ok(())

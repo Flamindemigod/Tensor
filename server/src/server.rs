@@ -21,18 +21,18 @@ pub type Tx = UnboundedSender<Message>;
 #[derive(Serialize)]
 struct ClientExport {
     server_ip: IpAddr,
-    server_port_ws: u16,
-    server_port_http: u16,
+    websocket_server_port: u16,
+    http_server_port: u16,
     server_name: Arc<str>,
     client_token: Arc<str>,
 }
 impl ClientExport {
     pub fn new(server: &Server, client: &Client) -> Self {
-        let addr= server.get_addr_websocket();
+        let addr = server.get_addr_websocket();
         let e = Self {
             server_ip: addr.ip(),
-            server_port_ws: addr.port(),
-            server_port_http: server.get_http_port(),
+            websocket_server_port: addr.port(),
+            http_server_port: server.get_http_port(),
             server_name: server.server_name.clone(),
             client_token: client.get_token(),
         };
@@ -68,49 +68,39 @@ pub struct Server {
     pub export_path: Option<PathBuf>,
     pub db_path: PathBuf,
     #[serde(skip)]
-    db: Option<Connection>,
+    db_connection: Option<Connection>,
     #[serde(skip)]
     connected_clients: HashMap<SocketAddr, Client>,
 }
 
 impl Server {
-    fn set_db_connection(&mut self) {
-        let new_db = !self.db_path.exists();
-        self.db = Some(sqlite::open(&self.db_path).unwrap_or_else(|_| {
-            panic!(
-                "Failed to Open Connection to db at {}",
-                &self.db_path.display()
-            )
-        }));
-        if new_db {
-            let query = "CREATE TABLE clients (uuid TEXT, token TEXT, username TEXT, display_name TEXT, about_me TEXT);";
-            self.db
-                .as_mut()
-                .unwrap()
-                .execute(query)
-                .expect("Failed to Create Table");
-        }
-    }
-
     pub fn init_server() -> Self {
         let mut reader = File::open("./config.json").expect("Failed to Open Server Config File");
         let mut buf = String::new();
         reader
             .read_to_string(&mut buf)
             .expect("Failed to Read File");
-        let mut server = serde_json::from_str::<Self>(&buf).expect("Failed to Parse Server Config");
-        server.set_db_connection();
-        server
+        let mut s = serde_json::from_str::<Self>(&buf).expect("Failed to Parse Server Config");
+
+        let new_db = !s.db_path.exists();
+        let db = sqlite::open(&s.db_path).unwrap_or_else(|_| {
+            panic!("Failed to Open Connection to db at {}", s.db_path.display())
+        });
+        if new_db {
+            let query = "CREATE TABLE clients (uuid TEXT, token TEXT, username TEXT, display_name TEXT, about_me TEXT);";
+            db.execute(query).expect("Failed to Create Table");
+        }
+        s.db_connection = Some(db);
+
+        s
     }
 
-    pub fn cleanup(&mut self) {
-        self.db = None;
-    }
+    pub fn cleanup(&self) {}
 
     pub fn get_websocket_port(&self) -> u16 {
         self.websocket_server_port
     }
-    pub fn get_http_port(&self) -> u16{
+    pub fn get_http_port(&self) -> u16 {
         self.http_server_port
     }
     pub fn get_addr_websocket(&self) -> SocketAddr {
@@ -121,12 +111,11 @@ impl Server {
         SocketAddr::new(self.server_ip, self.http_server_port)
     }
 
-
-    pub fn is_client_valid(&self, token: &str) -> Option<Client> {
+    pub fn is_client_valid(&mut self, token: &str) -> Option<Client> {
         let query = "SELECT * FROM clients WHERE token = ?";
-        self.db
-            .as_ref()
-            .expect("Connection does not exist")
+        self.db_connection
+            .as_mut()
+            .unwrap()
             .prepare(query)
             .unwrap()
             .into_iter()
@@ -137,9 +126,7 @@ impl Server {
     }
 
     pub fn client_connected(&mut self, addr: SocketAddr, client: Client) {
-        if self.is_client_valid(&client.get_token()).is_some() {
-            self.connected_clients.insert(addr, client);
-        }
+        self.connected_clients.insert(addr, client);
     }
     pub fn set_connected_client_tx(&mut self, addr: &SocketAddr, tx: Tx) {
         self.connected_clients.get_mut(addr).unwrap().tx = Some(tx);
@@ -153,23 +140,26 @@ impl Server {
         self.connected_clients.clone()
     }
 
-    pub fn is_client_connected_by_token(&self, token: &str) -> bool{
-        self.connected_clients.values().any(|c| c.get_token() == token.into())
+    pub fn is_client_connected_by_token(&self, token: &str) -> bool {
+        self.connected_clients
+            .values()
+            .any(|c| c.get_token() == token.into())
     }
 
-    pub fn new_client(&self, username: &str) {
-        let client = Client::new(username, self.db.as_ref().unwrap());
+    pub fn new_client(&mut self, username: &str) {
+        let client = Client::new(username, self.db_connection.as_mut().unwrap());
         ClientExport::new(self, &client);
     }
 
-    pub fn get_all_clients(&self) -> Vec<Client>{
+    pub fn get_all_clients(&mut self) -> Vec<Client> {
         let query = "SELECT * FROM clients";
-        self.db
-            .as_ref()
-            .expect("Connection does not exist")
+        self.db_connection
+            .as_mut()
+            .unwrap()
             .prepare(query)
             .unwrap()
             .into_iter()
-            .map(|row| Client::from_db_row(row.unwrap())).collect::<Vec<_>>()
+            .map(|row| Client::from_db_row(row.unwrap()))
+            .collect::<Vec<_>>()
     }
 }
